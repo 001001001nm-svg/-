@@ -14,175 +14,138 @@
             margin: 0;
             padding: 20px;
             color: #fff;
-            overflow-x: hidden;
             background: linear-gradient(135deg, #0f172a, #1e1b4b, #0f172a);
             background-size: cover;
             background-position: center;
-            background-attachment: fixed;
         }
 
-        /* Стили Колеса Фортуны слева */
+        /* Панель управления и выбор языка */
+        .top-panel {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 900px;
+            margin: 0 auto 20px auto;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 10px 20px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .controls-group { display: flex; gap: 10px; align-items: center; }
+        select, .panel-btn {
+            background: #334155; color: white; border: 1px solid #475569;
+            padding: 6px 12px; border-radius: 6px; cursor: pointer; font-family: 'Montserrat', sans-serif;
+        }
+        select:hover, .panel-btn:hover { background: #475569; }
+
+        /* Колесо Фортуны (появляется во время блиц-опроса) */
         #wheel-container {
+            display: none; /* Скрыто до запуска блица */
             position: fixed;
             left: 20px;
             top: 50%;
             transform: translateY(-50%);
-            width: 250px;
+            width: 240px;
             background: rgba(15, 23, 42, 0.95);
             border: 2px solid rgba(59, 130, 246, 0.5);
             border-radius: 16px;
             padding: 15px;
             text-align: center;
-            color: #fff;
             box-shadow: 0 10px 25px rgba(0,0,0,0.6);
             z-index: 100;
         }
         .wheel {
-            width: 130px;
-            height: 130px;
-            border-radius: 50%;
-            border: 5px solid #3b82f6;
-            margin: 10px auto;
-            position: relative;
-            transition: transform 4s cubic-bezier(0.15, 0.95, 0.15, 1);
-            background: conic-gradient(
-                #ef4444 0deg 72deg, 
-                #3b82f6 72deg 144deg, 
-                #10b981 144deg 216deg, 
-                #f59e0b 216deg 288deg, 
-                #8b5cf6 288deg 360deg
-            );
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            width: 120px; height: 120px; border-radius: 50%; border: 4px solid #3b82f6;
+            margin: 10px auto; position: relative; transition: transform 4s cubic-bezier(0.15, 0.95, 0.15, 1);
+            background: conic-gradient(#ef4444 0deg 72deg, #3b82f6 72deg 144deg, #10b981 144deg 216deg, #f59e0b 216deg 288deg, #8b5cf6 288deg 360deg);
+            display: flex; align-items: center; justify-content: center;
         }
         .wheel::after {
-            content: '▼';
-            position: absolute;
-            top: -16px;
-            color: #fff;
-            font-size: 16px;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+            content: '▼'; position: absolute; top: -14px; color: #fff; font-size: 14px;
         }
         .wheel-btn {
-            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-            border: none;
-            color: white;
-            padding: 8px 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: bold;
-            margin-top: 6px;
-            width: 100%;
-            font-size: 13px;
-            transition: 0.2s;
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8); border: none; color: white;
+            padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; font-size: 12px; margin-top: 5px;
         }
-        .wheel-btn:hover { background: linear-gradient(135deg, #2563eb, #1e40af); }
-        .wheel-btn:disabled { background: #475569; cursor: not-allowed; }
-        .timer-text { font-size: 12px; color: #94a3b8; margin-bottom: 5px; }
 
-        /* Основной контейнер игры */
         .main-content {
-            margin-left: 280px;
             max-width: 900px;
-            margin-right: auto;
+            margin: 0 auto;
             text-align: center;
         }
-        h1 { font-family: 'Comfortaa', cursive; font-size: 2.5rem; margin-bottom: 20px; text-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        h1 { font-family: 'Comfortaa', cursive; font-size: 2.2rem; margin-bottom: 15px; text-shadow: 0 4px 10px rgba(0,0,0,0.5); }
         
         .scoreboard {
-            display: flex;
-            justify-content: center;
-            gap: 30px;
-            margin-bottom: 30px;
+            display: flex; justify-content: center; gap: 30px; margin-bottom: 20px;
         }
         .team-card {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 15px 30px;
-            border-radius: 12px;
-            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 12px 25px; border-radius: 12px; backdrop-filter: blur(10px);
         }
         .team-card h3 { margin: 0 0 5px 0; color: #60a5fa; }
-        .score { font-size: 2rem; font-weight: bold; }
+        .score { font-size: 1.8rem; font-weight: bold; }
 
         .grid {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 12px;
-            background: rgba(255, 255, 255, 0.03);
-            padding: 20px;
-            border-radius: 16px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;
+            background: rgba(255, 255, 255, 0.03); padding: 15px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.1);
         }
         .cell {
-            background: linear-gradient(135deg, #1e293b, #334155);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-            padding: 20px 10px;
-            font-size: 1.2rem;
-            font-weight: bold;
-            color: #fff;
-            cursor: pointer;
-            transition: all 0.2s ease;
+            background: linear-gradient(135deg, #1e293b, #334155); border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px; padding: 18px 10px; font-size: 1.1rem; font-weight: bold; color: #fff; cursor: pointer; transition: all 0.2s;
         }
         .cell:hover:not(.opened) {
-            transform: translateY(-3px);
-            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+            transform: translateY(-2px); background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
         }
-        .cell.opened {
-            background: #0f172a;
-            color: #475569;
-            cursor: not-allowed;
-            border-color: #1e293b;
-        }
+        .cell.opened { background: #0f172a; color: #475569; cursor: not-allowed; border-color: #1e293b; }
 
         /* Модальное окно */
         .modal {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            backdrop-filter: blur(8px);
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(6px); justify-content: center; align-items: center; z-index: 1000;
         }
         .modal-content {
-            background: #1e293b;
-            border: 2px solid #3b82f6;
-            padding: 30px;
-            border-radius: 20px;
-            width: 550px;
-            max-width: 90%;
-            text-align: center;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+            background: #1e293b; border: 2px solid #3b82f6; padding: 25px; border-radius: 16px;
+            width: 500px; max-width: 90%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.6);
         }
         .modal-btn {
-            background: #3b82f6; color: white; border: none;
-            padding: 10px 25px; border-radius: 8px; font-weight: bold;
-            cursor: pointer; margin: 10px 5px; font-size: 1rem;
-            transition: 0.2s;
+            background: #3b82f6; color: white; border: none; padding: 8px 20px;
+            border-radius: 6px; font-weight: bold; cursor: pointer; margin: 8px 4px; font-size: 0.95rem;
         }
         .modal-btn:hover { background: #2563eb; }
         .answer-box {
-            background: #0f172a; padding: 15px; border-radius: 8px;
-            margin: 15px 0; border: 1px dashed #3b82f6; font-size: 1.1rem;
-            display: none;
+            background: #0f172a; padding: 12px; border-radius: 6px; margin: 12px 0;
+            border: 1px dashed #3b82f6; font-size: 1rem; display: none;
         }
     </style>
 </head>
 <body>
 
-    <!-- Колесо Фортуны слева -->
+    <!-- Панель управления и выбор языка -->
+    <div class="top-panel">
+        <div class="controls-group">
+            <label>Язык:</label>
+            <select id="langSelect">
+                <option value="ru">Русский</option>
+                <option value="kg">Кыргызча</option>
+                <option value="en">English</option>
+            </select>
+        </div>
+        <div class="controls-group">
+            <button class="panel-btn" onclick="startBlitz()">Запустить Блиц-Опрос</button>
+            <button class="panel-btn" style="background:#ef4444;" onclick="resetGame()">Сброс</button>
+        </div>
+    </div>
+
+    <!-- Колесо Фортуны слева (активируется при старте) -->
     <div id="wheel-container">
-        <h3 style="margin-top:0; font-size: 16px;">🎡 Колесо Фортуны</h3>
-        <div class="timer-text" id="wheel-timer-text">До вращения: <span id="wheel-timer">05:00</span></div>
+        <h4 style="margin:0 0 5px 0; color:#60a5fa;">🎡 Колесо Фортуны</h4>
+        <div style="font-size:11px; color:#94a3b8;" id="wheel-timer-text">Вращение через: <span id="wheel-timer">05:00</span></div>
         <div class="wheel" id="fortune-wheel"></div>
-        <div id="wheel-result" style="font-weight: bold; margin: 6px 0; min-height: 20px; color: #facc15; font-size: 13px;">Ожидание хода...</div>
+        <div id="wheel-result" style="font-weight:bold; margin:4px 0; min-height:18px; color:#facc15; font-size:12px;">Ожидание...</div>
         <button class="wheel-btn" id="spin-btn" onclick="spinWheel()">Крутить колесо</button>
-        <button class="wheel-btn" style="background: #64748b;" onclick="skipWheel()">Пропустить ход</button>
+        <button class="wheel-btn" style="background:#64748b;" onclick="skipWheel()">Пропустить</button>
     </div>
 
     <div class="main-content">
@@ -206,13 +169,13 @@
     <div class="modal" id="questionModal">
         <div class="modal-content">
             <h3 id="modalTeamTitle" style="color: #60a5fa; margin-top:0;">Отвечает: Команда 1</h3>
-            <p id="modalCellTitle" style="color: #94a3b8; font-size: 0.9rem;"></p>
-            <div id="questionText" style="font-size: 1.3rem; margin: 20px 0; font-weight: bold;">Загрузка вопроса от ИИ...</div>
+            <p id="modalCellTitle" style="color: #94a3b8; font-size: 0.85rem;"></p>
+            <div id="questionText" style="font-size: 1.2rem; margin: 15px 0; font-weight: bold;">Загрузка...</div>
             
             <button class="modal-btn" id="showAnswerBtn" onclick="revealAnswer()">Показать ответ</button>
             <div class="answer-box" id="answerBox">Правильный ответ: <span id="answerText" style="color: #4ade80; font-weight: bold;"></span></div>
             
-            <div style="margin-top: 20px;" id="actionButtons" style="display:none;">
+            <div style="margin-top: 15px;" id="actionButtons" style="display:none;">
                 <button class="modal-btn" style="background: #10b981;" onclick="gradeAnswer(true)">Правильно (+15)</button>
                 <button class="modal-btn" style="background: #ef4444;" onclick="gradeAnswer(false)">Неправильно (+0)</button>
             </div>
@@ -224,10 +187,10 @@
         let activeTeam = 1;
         let activeCell = null;
         let currentAiAnswer = "";
+        let blitzStarted = false;
 
         const subjects = ["Математика", "История", "География", "Русский язык", "Биология", "Физика", "Информатика", "Всемирная история"];
 
-        // Инициализация сетки ячеек (25 штук)
         const grid = document.getElementById('question-grid');
         for (let i = 1; i <= 25; i++) {
             const cell = document.createElement('div');
@@ -237,13 +200,23 @@
             grid.appendChild(cell);
         }
 
+        function startBlitz() {
+            blitzStarted = true;
+            document.getElementById('wheel-container').style.display = 'block';
+            alert("Блиц-опрос начался! Колесо фортуны активировано слева.");
+        }
+
+        function resetGame() {
+            location.reload();
+        }
+
         async function openQuestion(cellNum, cellElement) {
             if (cellElement.classList.contains('opened')) return;
             activeCell = cellElement;
             
             document.getElementById('modalTeamTitle').innerText = `Отвечает: Команда ${activeTeam}`;
             document.getElementById('modalCellTitle').innerText = `Клетка №${cellNum}`;
-            document.getElementById('questionText').innerText = "Генерируем интеллектуальный вопрос...";
+            document.getElementById('questionText').innerText = "Генерируем вопрос с помощью ИИ...";
             document.getElementById('answerBox').style.display = 'none';
             document.getElementById('showAnswerBtn').style.display = 'inline-block';
             document.getElementById('actionButtons').style.display = 'none';
@@ -251,19 +224,20 @@
             document.getElementById('questionModal').style.display = 'flex';
 
             let randomSubject = subjects[Math.floor(Math.random() * subjects.length)];
+            let selectedLang = document.getElementById('langSelect').value;
 
             try {
                 let response = await fetch('/generate_question', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ subject: randomSubject, grade: '5-9 класс' })
+                    body: JSON.stringify({ subject: randomSubject, grade: '5-9 класс', lang: selectedLang })
                 });
                 let data = await response.json();
                 document.getElementById('questionText').innerText = `[${randomSubject}] ${data.question}`;
                 currentAiAnswer = data.answer;
             } catch (e) {
-                document.getElementById('questionText').innerText = "Ошибка загрузки. Вопрос: Чему равен квадратный корень из 81?";
-                currentAiAnswer = "9";
+                document.getElementById('questionText').innerText = "Вопрос: Столица Кыргызстана?";
+                currentAiAnswer = "Бишкек";
             }
         }
 
@@ -278,37 +252,42 @@
             if (isCorrect) {
                 scores[activeTeam] += 15;
                 document.getElementById(`score${activeTeam}`).innerText = scores[activeTeam];
-                confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+                confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 } });
             }
-            activeCell.classList.add('opened');
+            if (activeCell) {
+                activeCell.classList.add('opened');
+            }
+            // Гарантированно закрываем модальное окно
             document.getElementById('questionModal').style.display = 'none';
-            activeTeam = activeTeam === 1 ? 2 : 1; // Смена хода команд
+            activeTeam = activeTeam === 1 ? 2 : 1;
         }
 
-        // Логика Колеса Фортуны
-        let wheelSecondsLeft = 300; // 5 минут
+        // Логика колеса фортуны
+        let wheelSecondsLeft = 300;
         let canSpin = true;
         let currentWheelTeam = 1;
 
         setInterval(() => {
+            if (!blitzStarted) return;
             if (wheelSecondsLeft > 0) {
                 wheelSecondsLeft--;
                 let m = Math.floor(wheelSecondsLeft / 60);
                 let s = wheelSecondsLeft % 60;
-                document.getElementById('wheel-timer').innerText = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                let timerElem = document.getElementById('wheel-timer');
+                if(timerElem) timerElem.innerText = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
             } else {
                 canSpin = true;
-                document.getElementById('wheel-result').innerText = `Команда ${currentWheelTeam} может крутить колесо!`;
+                let resElem = document.getElementById('wheel-result');
+                if(resElem) resElem.innerText = `Команда ${currentWheelTeam} крутит колесо!`;
             }
         }, 1000);
 
         let currentRotation = 0;
         function spinWheel() {
             if (!canSpin) {
-                alert("Колесо можно крутить только раз в 5 минут!");
+                alert("Колесо можно крутить только по таймеру!");
                 return;
             }
-            
             const sectors = [
                 { text: "+50 баллов", val: 50 },
                 { text: "+15 баллов", val: 15 },
@@ -316,24 +295,24 @@
                 { text: "-15 баллов", val: -15 },
                 { text: "-50 баллов", val: -50 }
             ];
-            
             let randomIndex = Math.floor(Math.random() * sectors.length);
             let degreesPerSector = 360 / sectors.length;
             currentRotation += 1800 + (randomIndex * degreesPerSector) + (degreesPerSector / 2);
             
             const wheel = document.getElementById('fortune-wheel');
-            wheel.style.transform = `rotate(${currentRotation}deg)`;
+            if(wheel) wheel.style.transform = `rotate(${currentRotation}deg)`;
+            
             document.getElementById('spin-btn').disabled = true;
             
             setTimeout(() => {
                 let result = sectors[sectors.length - 1 - randomIndex];
-                document.getElementById('wheel-result').innerText = `Команда ${currentWheelTeam}: ${result.text}!`;
+                document.getElementById('wheel-result').innerText = `Команда ${currentWheelTeam}: ${result.text}`;
                 
                 scores[currentWheelTeam] = Math.max(0, scores[currentWheelTeam] + result.val);
-                document.getElementById(`score1`).innerText = scores[1];
-                document.getElementById(`score2`).innerText = scores[2];
+                document.getElementById('score1').innerText = scores[1];
+                document.getElementById('score2').innerText = scores[2];
                 
-                if (result.val > 0) confetti({ particleCount: 80, spread: 60 });
+                if (result.val > 0) confetti({ particleCount: 60, spread: 50 });
 
                 wheelSecondsLeft = 300;
                 canSpin = false;
@@ -347,13 +326,6 @@
             wheelSecondsLeft = 300;
             canSpin = false;
             currentWheelTeam = currentWheelTeam === 1 ? 2 : 1;
-        }
-
-        // Функция обновления баллов из колеса для интеграции
-        function updateScore(team, val) {
-            scores[team] = Math.max(0, scores[team] + val);
-            document.getElementById(`score1`).innerText = scores[1];
-            document.getElementById(`score2`).innerText = scores[2];
         }
     </script>
 </body>
