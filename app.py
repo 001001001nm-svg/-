@@ -13,7 +13,14 @@ SUBJECTS = {"Математика", "Физика", "Литература", "К�
 
 @app.route("/")
 def index():
-    return send_from_directory(BASE, "index.html")
+    for folder in (BASE, os.path.join(BASE, "templates")):
+        if os.path.exists(os.path.join(folder, "index.html")):
+            return send_from_directory(folder, "index.html")
+    found = []
+    for root, _, files in os.walk(BASE):
+        if ".git" not in root:
+            found += [os.path.relpath(os.path.join(root, f), BASE) for f in files]
+    return "index.html не найден. Файлы в проекте: " + ", ".join(found), 404
 
 
 @app.route("/api/questions", methods=["POST"])
