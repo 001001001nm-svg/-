@@ -135,7 +135,9 @@ async function genQuestions(){
   const n=cfg.q;
   const lang=cfg.subj==="Кыргызский язык"?"Вопросы по кыргызскому языку пиши на русском, а примеры слов давай на кыргызском.":"Пиши по-русски.";
   const prompt=`Ты составитель школьных блиц-викторин. Составь ровно ${n} разных вопросов для ${cfg.grade} класса школы Кыргызстана по предмету «${cfg.subj}» по школьной программе. Сложность растёт от лёгких к сложным, но всё по уровню ${cfg.grade} класса. Вопросы короткие, ответ однозначный и короткий (слово, число, фраза). Темы не повторяй. ${lang} Верни ТОЛЬКО JSON-массив вида [{"q":"вопрос","a":"ответ"}], без пояснений и без markdown.`;
-  const r=await sample.json(prompt);
+  const resp=await fetch("/api/questions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({grade:cfg.grade,subject:cfg.subj,n:n})});
+  if(!resp.ok)throw new Error("сервер вернул "+resp.status);
+  const r=await resp.json();
   if(!Array.isArray(r)||r.length<n)throw new Error("ИИ вернул неполный список");
   return r.slice(0,n).map(x=>({q:String(x.q),a:String(x.a)}));
 }
@@ -144,8 +146,6 @@ $("play").onclick=async()=>{
   $("err").textContent="";
   musicInit();const btn=$("play");btn.disabled=true;btn.textContent="⏳ ИИ придумывает вопросы…";
   try{
-    sample=sample||await claude.use("sample");
-    if(!sample)throw new Error("ИИ недоступен в этом окне");
     const qs=await genQuestions();
     const inputs=[...$("names").querySelectorAll("input")];
     const teams=inputs.map((i,k)=>({name:i.value.trim()||"Команда "+(k+1),score:0}));
