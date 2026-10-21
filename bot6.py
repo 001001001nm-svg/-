@@ -1,4 +1,9 @@
-<!DOCTYPE html>
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = int(os.environ.get("PORT", 10000))
+
+HTML = r"""<!DOCTYPE html>
 <html lang="ky"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Алтын Сөз</title>
@@ -174,3 +179,30 @@ const a=e.animate([{transform:`translate(${l?-80:W+14}px,${y0}px)`},{transform:`
 function eagleTap(ev){ev.stopPropagation();if(!eOn)return;const e=$("eg");S.g+=3;save();upd();ok();toast("Бүркүт алтын ташты! +3 алтын");e.style.opacity=0;e.getAnimations().forEach(a=>a.finish())}
 home();
 </script></body></html>
+"""
+
+PAGE = HTML.encode("utf-8")
+
+
+class Handler(BaseHTTPRequestHandler):
+    def _send(self, body=True):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(PAGE)))
+        self.end_headers()
+        if body:
+            self.wfile.write(PAGE)
+
+    def do_GET(self):
+        self._send(True)
+
+    def do_HEAD(self):
+        self._send(False)
+
+    def log_message(self, *args):
+        pass
+
+
+if __name__ == "__main__":
+    print(f"Server started on port {PORT}")
+    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
