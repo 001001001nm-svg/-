@@ -6,6 +6,7 @@ import asyncio, json, logging, os, re
 from collections import defaultdict
 
 import aiosqlite, httpx
+from aiohttp import web
 from dotenv import load_dotenv
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -1029,8 +1030,30 @@ async def cb_otc(cb: CallbackQuery):
 
 
 # ───────────────────────── ЗАПУСК ─────────────────────────
+async def health_server():
+    """Мини-веб-сервер: Render (тип Web Service) требует открытый порт."""
+    app = web.Application()
+    app.router.add_get("/", lambda r: web.Response(text="ok"))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", "10000"))).start()
+
+
+async def keepalive():
+    """Раз в 10 минут пингует свой URL, чтобы бесплатный Render не засыпал."""
+    url = os.getenv("RENDER_EXTERNAL_URL")
+    while url:
+        await asyncio.sleep(600)
+        try:
+            await http.get(url)
+        except Exception:
+            pass
+
+
 async def main():
     await init_db()
+    await health_server()
+    asyncio.create_task(keepalive())
     dp = Dispatcher()
     dp.message.outer_middleware(Gate())
     dp.callback_query.outer_middleware(Gate())
