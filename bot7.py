@@ -1,8 +1,8 @@
 """Telegram AI-продавец на Gemini.
-Консультация -> заказ -> реквизиты -> чек -> одобрение админом.
+Консультация -> заказ -> реквизиты (+QR) -> чек -> одобрение админом.
 Запуск: python bot.py   (все секреты только в переменных окружения / .env)
 """
-import asyncio, json, logging, os, re
+import asyncio, base64, io, json, logging, os, re
 from collections import defaultdict
 
 import aiosqlite, httpx
@@ -21,6 +21,7 @@ TG_TOKEN = os.environ["TG_TOKEN"]
 GEMINI_KEY = os.environ["GEMINI_API_KEY"]
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or 0)   # 0 = владельцем станет первый, кто напишет боту
 DB = os.getenv("DB_PATH", "shop.db")
+TEMP = 0.6                                        # температура ИИ зашита в коде (из настроек убрана)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("shop")
@@ -28,12 +29,13 @@ bot = Bot(TG_TOKEN)
 http = httpx.AsyncClient(timeout=60)
 
 # ───────────────────────── НАСТРОЙКИ АССИСТЕНТА ─────────────────────────
-# ключ: (название, значение по умолчанию, тип)  тип: "text" | "toggle" | список вариантов | "hidden"
+# ключ: (название, значение по умолчанию, тип)  тип: "text" | "toggle" | "photo" | список вариантов | "hidden"
 SET = {
     "business_name": ("🏪 Название бизнеса", "Мой магазин", "text"),
-    "greeting": ("👋 Приветствие (/start)", "Здравствуйте! Я ассистент магазина. Помогу выбрать товар и оформить заказ 🙂", "text"),
-    "system_prompt": ("🧠 Инструкция для ИИ", "Ты опытный консультант-продавец. Помогай выбрать товар, отвечай по делу, "
-                      "не дави на клиента. Цены и наличие бери ТОЛЬКО из search_catalog, ничего не выдумывай.", "text"),
+    "greeting": ("👋 Приветствие (/start)", "Здравствуйте! Я ассистент магазина. Помогу выбрать товар и оформить заказ 🙂\n"
+                 "Можно писать текстом, отправлять голосовые или фото товара 🎤📷", "text"),
+    "system_prompt": ("🧠 Инструкция для ИИ", "Ты опытный консультант-продавец. Помогай выбрать товар, отвечай по делу. "
+                      "Цены и наличие бери ТОЛЬКО из search_catalog, ничего не выдумывай.", "text"),
     "tone": ("🎭 Стиль общения", "дружелюбный", ["дружелюбный", "деловой", "краткий", "энергичный с эмодзи"]),
     "upsell": ("🛍 Допродажи (предлагать сопутствующее)", "1", "toggle"),
     "need_phone": ("📞 Запрашивать телефон", "1", "toggle"),
@@ -41,20 +43,30 @@ SET = {
     "min_order": ("💰 Мин. сумма заказа (0 — нет)", "0", "text"),
     "delivery_info": ("🚚 Условия доставки", "Доставка 1–2 дня. Самовывоз бесплатно.", "text"),
     "work_hours": ("🕒 Режим работы", "", "text"),
-    "requisites": ("💳 Реквизиты для оплаты", "", "text"),
-    "payment_note": ("📝 Подсказка после реквизитов", "После оплаты отправьте сюда фото или файл чека 🧾", "text"),
-    "handoff_text": ("🙋 Текст при вызове менеджера", "Передал диалог менеджеру, он скоро ответит 🙌", "text"),
+    "requisites": ("💳 Реквизиты для оплаты (текст)", "", "text"),
+    "requisites_photo": ("🖼 QR-код / фото к реквизитам", "", "photo"),
+    "payment_note": ("📝 Подсказка после реквизитов",
+                     "После оплаты нажмите «🧾 Отправить чек» в меню внизу и пришлите фото или файл чека 🙏", "text"),
+    "handoff_text": ("🙋 Текст после вопроса менеджеру", "Передал ваш вопрос менеджеру, он скоро ответит 🙌", "text"),
     "disabled_text": ("⏸ Ответ при выключенном боте", "Сейчас бот отключён. Загляните позже 🙏", "text"),
     "currency": ("💱 Валюта", "₽", "text"),
     "model": ("🤖 Модель Gemini", "gemini-2.5-flash", "text"),
-    "temperature": ("🌡 Температура (0–2)", "0.4", "text"),
+    "offer": ("", "", "hidden"),          # «Что предлагать покупателям» — отдельная кнопка у админа
     "bot_enabled": ("", "1", "hidden"),
 }
 ST = {"awaiting_payment": "⏳ Ждёт оплаты", "checking": "🔎 Чек на проверке", "paid": "💳 Оплачен",
       "shipped": "🚚 Отправлен", "done": "✅ Выполнен", "cancelled": "❌ Отменён"}
 ICON = {"owner": "👑", "admin": "🛡", "customer": "👤", "banned": "🚫"}
+
+# Кнопки нижнего меню
 B_CAT, B_ORD, B_HUM = "🛍 Каталог", "📦 Мои заказы", "🙋 Менеджер"
-B_SET, B_ADM, B_OWN = "⚙️ Настройки", "🛠 Админ-панель", "👑 Панель владельца"
+B_RCPT, B_PICK, B_BACK = "🧾 Отправить чек", "🎯 Подобрать за меня", "🤖 Вернуться к ассистенту"
+B_CANCEL, B_HOME = "❌ Отмена", "🏠 Главное меню"
+B_SET, B_ADM, B_OWN, B_OFFER = "⚙️ Настройки", "🛠 Админ-панель", "👑 Панель владельца", "💡 Что предлагать"
+B_AORD, B_ARCP, B_ACAT, B_AADD = "📋 Заказы", "🧾 Чеки на проверке", "🗂 Товары", "➕ Добавить товар"
+B_ASTAT, B_ABC = "📊 Статистика", "📣 Рассылка"
+B_OADM, B_OLADM, B_OBAN, B_OLBAN = "🛡 Назначить админа", "👥 Админы", "🚫 Забанить", "♻️ Забаненные"
+B_OUSR, B_OTR, B_OOFF, B_OON = "👤 Пользователи", "👑 Передать права", "🔴 Выключить бота", "🟢 Включить бота"
 
 
 # ───────────────────────── БАЗА ─────────────────────────
@@ -92,12 +104,17 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, price REAL,
             stock INTEGER DEFAULT 0, description TEXT DEFAULT '', active INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, name TEXT, phone TEXT,
-            address TEXT, comment TEXT, items TEXT, total REAL, status TEXT DEFAULT 'awaiting_payment', ts TEXT DEFAULT CURRENT_TIMESTAMP);
+            address TEXT, comment TEXT, items TEXT, total REAL, status TEXT DEFAULT 'awaiting_payment',
+            ts TEXT DEFAULT CURRENT_TIMESTAMP, reminded INTEGER DEFAULT 0);
         CREATE TABLE IF NOT EXISTS receipts(id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER, uid INTEGER,
             file_id TEXT, kind TEXT, status TEXT DEFAULT 'pending', by_admin INTEGER, ts TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS receipt_msgs(receipt_id INTEGER, chat_id INTEGER, message_id INTEGER);
         CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, role TEXT, text TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP);
         """)
+        try:  # миграция старой базы
+            await db.execute("ALTER TABLE orders ADD COLUMN reminded INTEGER DEFAULT 0")
+        except Exception:
+            pass
         await db.commit()
 
 
@@ -111,16 +128,34 @@ async def set_S(key, val):
 
 
 def kb(*rows):
-    return Kb(inline_keyboard=[[Btn(text=t, callback_data=d) for t, d in r] for r in rows])
+    """Инлайн-кнопки (только для действий, привязанных к конкретному сообщению)."""
+    return Kb(inline_keyboard=[[Btn(text=t, callback_data=d) for t, d in r] for r in rows]) if rows else None
 
 
-def reply_kb(role):
-    rows = [[KeyboardButton(text=B_CAT), KeyboardButton(text=B_ORD)], [KeyboardButton(text=B_HUM)]]
+def rk(*rows, ph=None):
+    """Кнопки нижнего меню."""
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t) for t in r] for r in rows],
+                               resize_keyboard=True, input_field_placeholder=ph)
+
+
+def reply_kb(role, handoff=False):
+    rows = [[B_CAT, B_ORD], [B_RCPT, B_PICK], [B_BACK if handoff else B_HUM]]
     if role in ("admin", "owner"):
-        rows.append([KeyboardButton(text=B_SET), KeyboardButton(text=B_ADM)])
-    if role == "owner":
-        rows.append([KeyboardButton(text=B_OWN)])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+        rows.append([B_ADM, B_SET])
+        rows.append([B_OFFER] + ([B_OWN] if role == "owner" else []))
+    return rk(*rows, ph="Напишите, что ищете…")
+
+
+def cancel_kb():
+    return rk([B_CANCEL])
+
+
+def panel_kb():
+    return rk([B_AORD, B_ARCP], [B_ACAT, B_AADD], [B_ASTAT, B_ABC], [B_HOME])
+
+
+def owner_kb(on):
+    return rk([B_OADM, B_OLADM], [B_OBAN, B_OLBAN], [B_OUSR, B_OTR], [B_OON if on else B_OOFF], [B_HOME])
 
 
 async def staff_ids():
@@ -160,9 +195,23 @@ TOOLS = [{"functionDeclarations": [
          "comment": {"type": "STRING"},
          "customer_confirmed": {"type": "BOOLEAN", "description": "true только если клиент ответил 'да' на итоговое подтверждение"}},
          "required": ["items", "customer_confirmed"]}},
+    {"name": "resend_requisites",
+     "description": "Повторно отправить клиенту реквизиты и QR по его неоплаченному заказу (если просит или потерял).",
+     "parameters": {"type": "OBJECT", "properties": {"order_id": {"type": "INTEGER"}}}},
     {"name": "call_human", "description": "Позвать живого менеджера: жалоба, нестандартный вопрос, просьба клиента.",
      "parameters": {"type": "OBJECT", "properties": {"reason": {"type": "STRING"}}, "required": ["reason"]}},
 ]}]
+
+SALES_RULES = """
+ГЛАВНАЯ ЦЕЛЬ — довести клиента до оплаты заказа. Ты не просто отвечаешь, а ведёшь клиента по шагам и убеждаешь.
+- КАЖДОЕ сообщение заканчивай конкретным следующим шагом или вопросом (что выбрать, сколько штук, подтвердить заказ, оплатить). Клиент всегда должен понимать, что делать дальше.
+- Сначала выясни потребность (1 короткий вопрос), потом предложи 1–2 лучших варианта и объясни выгоду для клиента, а не весь каталог.
+- Возражения («дорого», «я подумаю», «сомневаюсь»): уточни причину, подчеркни ценность и пользу, предложи вариант дешевле или другой из каталога, мягко подтолкни к решению.
+- Честная срочность: если в наличии осталось 3 шт. или меньше — скажи, что остаток небольшой. Никогда не выдумывай скидки, акции, сроки и дефицит.
+- Когда клиент определился — сам предложи оформить: собери данные, перескажи заказ и спроси «Подтверждаете?».
+- После оформления подтолкни к оплате сразу: реквизиты уже отправлены, после оплаты нужно нажать кнопку «🧾 Отправить чек» в меню внизу и прислать чек.
+- Если клиент просит реквизиты повторно или потерял их — вызови resend_requisites.
+- Не дави грубо и не груби: тепло, уверенно, по делу. 2–4 коротких предложения."""
 
 
 async def build_system(u):
@@ -175,23 +224,57 @@ async def build_system(u):
     steps.append("3. Перескажи заказ: позиции, итоговую сумму"
                  + (", контакты" if need else "") + " — и спроси «Подтверждаете заказ?».")
     steps.append("4. Только после явного «да» вызови create_order с customer_confirmed=true.")
-    steps.append("5. После создания заказа бот САМ отдельным сообщением пришлёт клиенту реквизиты и кнопку отправки чека. "
-                 "Реквизиты сам не пиши. Коротко скажи, что заказ создан, назови номер и сумму, и что после оплаты нужно отправить чек (фото или файл) в этот чат.")
-    return f"""{s['system_prompt']}
+    steps.append("5. После создания заказа бот САМ отдельным сообщением пришлёт клиенту реквизиты (и QR). "
+                 "Реквизиты сам не пиши. Коротко скажи: заказ создан, номер и сумма, оплатите по реквизитам выше "
+                 "и нажмите «🧾 Отправить чек» в меню внизу.")
+    parts = [s["system_prompt"], "",
+             f"Бизнес: {s['business_name']}. Валюта: {s['currency']}.",
+             f"Стиль общения: {s['tone']}.",
+             f"Доставка: {s['delivery_info'] or 'уточняй у менеджера'}. Режим работы: {s['work_hours'] or 'не указан'}.",
+             f"Мин. сумма заказа: {s['min_order']}.",
+             "Когда уместно, предлагай сопутствующие товары из каталога." if s["upsell"] == "1" else "Не предлагай допродажи.",
+             f"Клиент: {u['name']} (@{u['username'] or 'нет'}).",
+             SALES_RULES]
+    if s["offer"]:
+        parts.append("\nПРИОРИТЕТ ВЛАДЕЛЬЦА — что предлагать покупателям (упоминай при любом подходящем случае, "
+                     "это единственные акции/условия, о которых можно говорить):\n" + s["offer"])
+    open_orders = await q("SELECT id,total FROM orders WHERE uid=? AND status='awaiting_payment'", (u["tg_id"],))
+    if open_orders:
+        parts.append("\nУ клиента есть НЕОПЛАЧЕННЫЕ заказы: " + ", ".join(f"#{o['id']} на {o['total']:g} {s['currency']}" for o in open_orders)
+                     + ". Мягко веди к оплате: напомни, что реквизиты отправлены, после оплаты нужна кнопка «🧾 Отправить чек». "
+                       "Если сомневается — помоги снять сомнения.")
+    parts.append("\nФОРМАТ: пиши простым текстом без markdown (без **, #, таблиц). Коротко.\n\nПОРЯДОК ОФОРМЛЕНИЯ:\n" + "\n".join(steps))
+    parts.append("\nНикогда не выдумывай цены, скидки, сроки и наличие. Если не уверен — вызови call_human.")
+    return "\n".join(parts)
 
-Бизнес: {s['business_name']}. Валюта: {s['currency']}.
-Стиль общения: {s['tone']}.
-Доставка: {s['delivery_info'] or 'уточняй у менеджера'}. Режим работы: {s['work_hours'] or 'не указан'}.
-Мин. сумма заказа: {s['min_order']}.
-{'Когда уместно, мягко предлагай сопутствующие товары из каталога.' if s['upsell'] == '1' else 'Не предлагай допродажи.'}
-Клиент: {u['name']} (@{u['username'] or 'нет'}).
 
-ФОРМАТ: пиши простым текстом без markdown (без **, #, таблиц). Коротко.
+async def gem_post(body):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{await S('model')}:generateContent"
+    data = {}
+    for _try in range(2):
+        try:
+            r = await http.post(url, headers={"x-goog-api-key": GEMINI_KEY}, json=body)
+            data = r.json()
+        except Exception as e:
+            log.error("Gemini http: %s", e)
+            data = {}
+        if "candidates" in data:
+            break
+        log.error("Gemini: %s", str(data)[:500])
+        await asyncio.sleep(2)
+    return data
 
-ПОРЯДОК ОФОРМЛЕНИЯ:
-""" + "\n".join(steps) + """
 
-Никогда не выдумывай цены, скидки, сроки и наличие. Если не уверен — вызови call_human."""
+async def gem_media(raw: bytes, mime: str, prompt: str):
+    """Голос -> текст, фото -> описание."""
+    body = {"contents": [{"role": "user", "parts": [
+        {"inlineData": {"mimeType": mime, "data": base64.b64encode(raw).decode()}}, {"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2}}
+    data = await gem_post(body)
+    if "candidates" not in data:
+        return None
+    parts = (data["candidates"][0].get("content") or {}).get("parts", [])
+    return "".join(p.get("text", "") for p in parts if not p.get("thought")).strip() or None
 
 
 async def gemini_chat(uid, u):
@@ -199,23 +282,11 @@ async def gemini_chat(uid, u):
     contents = [{"role": h["role"], "parts": [{"text": h["text"]}]} for h in reversed(hist)]
     while contents and contents[0]["role"] != "user":
         contents.pop(0)
-    try:
-        temp = float((await S("temperature")).replace(",", "."))
-    except ValueError:
-        temp = 0.4
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{await S('model')}:generateContent"
     system = await build_system(u)
     for _ in range(6):
         body = {"system_instruction": {"parts": [{"text": system}]}, "contents": contents,
-                "tools": TOOLS, "generationConfig": {"temperature": temp}}
-        data = {}
-        for _try in range(2):
-            r = await http.post(url, headers={"x-goog-api-key": GEMINI_KEY}, json=body)
-            data = r.json()
-            if "candidates" in data:
-                break
-            log.error("Gemini: %s", str(data)[:500])
-            await asyncio.sleep(2)
+                "tools": TOOLS, "generationConfig": {"temperature": TEMP}}
+        data = await gem_post(body)
         if "candidates" not in data:
             return None
         content = data["candidates"][0].get("content") or {}
@@ -241,11 +312,13 @@ async def restore_stock(items):
         await q("UPDATE products SET stock=stock+? WHERE id=?", (i["qty"], i["id"]), commit=True)
 
 
-async def do_handoff(uid, reason):
+async def do_handoff(uid, reason, question=None):
     await q("UPDATE users SET handoff=1 WHERE tg_id=?", (uid,), commit=True)
     u = await q1("SELECT * FROM users WHERE tg_id=?", (uid,))
-    await notify(f"🙋 Нужен человек: {u['name']} @{u['username'] or '—'} uid:{uid}\nПричина: {reason}\n\n"
-                 "↩️ Отвечайте реплаем на сообщения клиента — я перешлю ему.", kb([("🤖 Вернуть боту", f"cr:{uid}")]))
+    head = f"🙋 Нужен человек: {u['name']} @{u['username'] or '—'} uid:{uid}\nПричина: {reason}"
+    if question:
+        head += f"\n\n❓ {question}"
+    await notify(head + "\n\n↩️ Отвечайте реплаем на это сообщение — я перешлю клиенту.", kb([("🤖 Вернуть боту", f"cr:{uid}")]))
 
 
 async def run_tool(name, a, uid, u):
@@ -260,6 +333,15 @@ async def run_tool(name, a, uid, u):
     if name == "call_human":
         await do_handoff(uid, a.get("reason", "—"))
         return {"ok": True, "instruction": "Скажи клиенту, что передал диалог менеджеру и тот скоро ответит."}
+    if name == "resend_requisites":
+        if a.get("order_id"):
+            o = await q1("SELECT * FROM orders WHERE id=? AND uid=? AND status='awaiting_payment'", (int(a["order_id"]), uid))
+        else:
+            o = await q1("SELECT * FROM orders WHERE uid=? AND status='awaiting_payment' ORDER BY id DESC LIMIT 1", (uid,))
+        if not o:
+            return {"error": "У клиента нет неоплаченных заказов."}
+        await send_requisites(uid, o["id"], json.loads(o["items"]), o["total"])
+        return {"ok": True, "note": "Реквизиты отправлены отдельным сообщением. Напомни про кнопку «🧾 Отправить чек» внизу."}
     if name == "create_order":
         if not a.get("customer_confirmed"):
             return {"error": "Нет явного подтверждения. Перескажи заказ и спроси подтверждение."}
@@ -301,18 +383,25 @@ async def run_tool(name, a, uid, u):
         await notify(f"🛒 Новый заказ #{oid} от {u['name']} @{u['username'] or '—'}\n{fmt_items(items)}\nИтого: {total:g} {cur}\n"
                      f"📞 {phone or '—'}  📍 {address or '—'}\nСтатус: ждёт оплаты", kb([("Открыть", f"o:{oid}")]))
         return {"order_id": oid, "total": total, "currency": cur,
-                "note": "Реквизиты и кнопка чека уже отправлены клиенту отдельным сообщением."}
+                "note": "Реквизиты (и QR) уже отправлены клиенту отдельным сообщением."}
     return {"error": "unknown tool"}
 
 
 async def send_requisites(uid, oid, items, total):
-    cur, req, note = await S("currency"), await S("requisites"), await S("payment_note")
-    if req:
-        text = f"🧾 Заказ #{oid}\n{fmt_items(items)}\n\nК оплате: {total:g} {cur}\n\n💳 Реквизиты:\n{req}\n\n{note}"
-    else:
-        text = f"🧾 Заказ #{oid}\nК оплате: {total:g} {cur}\n\nМенеджер скоро пришлёт реквизиты."
-        await notify(f"⚠️ В заказе #{oid} нет реквизитов: заполните их в ⚙️ Настройки → 💳 Реквизиты и отправьте клиенту.")
-    await safe_send(uid, text, kb([("🧾 Отправить чек", f"rcpt:{oid}")], [("❌ Отменить заказ", f"cancel:{oid}")]))
+    cur, req, note, ph = await S("currency"), await S("requisites"), await S("payment_note"), await S("requisites_photo")
+    head = f"🧾 Заказ #{oid}\n{fmt_items(items)}\n\nК оплате: {total:g} {cur}"
+    if not req and not ph:
+        await safe_send(uid, head + "\n\nМенеджер скоро пришлёт реквизиты.")
+        await notify(f"⚠️ В заказе #{oid} нет реквизитов: заполните их в ⚙️ Настройки → 💳 Реквизиты / 🖼 QR и отправьте клиенту.")
+        return
+    if ph:  # QR / фото реквизитов
+        kind, _, fid = ph.partition(":")
+        try:
+            send = bot.send_photo if kind == "photo" else bot.send_document
+            await send(uid, fid, caption=f"💳 QR / реквизиты для оплаты заказа #{oid}\nСумма: {total:g} {cur}")
+        except Exception as e:
+            log.warning("qr -> %s: %s", uid, e)
+    await safe_send(uid, head + (f"\n\n💳 Реквизиты:\n{req}" if req else "") + (f"\n\n{note}" if note else ""))
 
 
 locks = defaultdict(asyncio.Lock)
@@ -339,7 +428,8 @@ async def chat_with_ai(uid, text):
         await do_handoff(uid, "Сбой ИИ")
         reply = await S("handoff_text")
     await q("INSERT INTO messages(uid,role,text) VALUES(?,?,?)", (uid, "model", reply), commit=True)
-    await safe_send(uid, reply)
+    u2 = await q1("SELECT role, handoff FROM users WHERE tg_id=?", (uid,))
+    await safe_send(uid, reply, reply_kb(u2["role"], True) if u2 and u2["handoff"] else None)
 
 
 # ───────────────────────── Роли, фильтры, middleware ─────────────────────────
@@ -395,7 +485,8 @@ class ReplyToClient(BaseFilter):
 
 class St(StatesGroup):
     cat_name = State(); cat_price = State(); cat_stock = State(); cat_desc = State()
-    prod_edit = State(); set_val = State(); own_target = State(); bcast = State(); receipt = State()
+    prod_edit = State(); set_val = State(); set_photo = State(); own_target = State()
+    bcast = State(); receipt = State(); ask_mgr = State()
 
 
 nav, own, adm, cust = Router(), Router(), Router(), Router()
@@ -411,7 +502,7 @@ async def show(cb: CallbackQuery, text, markup=None):
     await cb.answer()
 
 
-# ───────────────────────── Навигация (кнопки меню) ─────────────────────────
+# ───────────────────────── Общая навигация (нижнее меню) ─────────────────────────
 @nav.message(CommandStart())
 async def cmd_start(m: Message, state: FSMContext, role: str):
     await state.clear()
@@ -421,23 +512,32 @@ async def cmd_start(m: Message, state: FSMContext, role: str):
     await m.answer(text, reply_markup=reply_kb(role))
 
 
+@nav.message(Command("menu"))
+@nav.message(F.text == B_HOME)
+async def cmd_menu(m: Message, state: FSMContext, role: str):
+    await state.clear()
+    await m.answer("🏠 Главное меню", reply_markup=reply_kb(role))
+
+
 @nav.message(Command("id"))
 async def cmd_id(m: Message):
     await m.answer(f"Ваш id: {m.from_user.id}")
 
 
 @nav.message(Command("cancel"))
-async def cmd_cancel(m: Message, state: FSMContext):
+@nav.message(F.text == B_CANCEL)
+async def cmd_cancel(m: Message, state: FSMContext, role: str):
     await state.clear()
-    await m.answer("Отменено.")
+    hand = (await q1("SELECT handoff FROM users WHERE tg_id=?", (m.from_user.id,)) or {}).get("handoff")
+    await m.answer("Отменено.", reply_markup=reply_kb(role, bool(hand)))
 
 
 @nav.message(Command("reset"))
-async def cmd_reset(m: Message, state: FSMContext):
+async def cmd_reset(m: Message, state: FSMContext, role: str):
     await state.clear()
     await q("DELETE FROM messages WHERE uid=?", (m.from_user.id,), commit=True)
     await q("UPDATE users SET handoff=0 WHERE tg_id=?", (m.from_user.id,), commit=True)
-    await m.answer("🔄 Диалог сброшен. Чем помочь?")
+    await m.answer("🔄 Диалог сброшен. Чем помочь?", reply_markup=reply_kb(role))
 
 
 @nav.message(F.text == B_CAT)
@@ -464,40 +564,80 @@ async def my_orders(m: Message, state: FSMContext):
         text += f"#{o['id']} · {ST[o['status']]} · {o['total']:g} {cur}\n{its}\n\n"
         if o["status"] == "awaiting_payment":
             rows.append([(f"🧾 Чек по #{o['id']}", f"rcpt:{o['id']}"), (f"❌ Отмена #{o['id']}", f"cancel:{o['id']}")])
-    await m.answer(text[:4000], reply_markup=kb(*rows) if rows else None)
+    await m.answer(text[:4000], reply_markup=kb(*rows))
+
+
+@nav.message(F.text == B_PICK)
+async def pick_for_me(m: Message, state: FSMContext):
+    await state.clear()
+    await chat_with_ai(m.from_user.id, "Помоги мне выбрать товар: задай 1–2 коротких вопроса про задачу и бюджет, "
+                                       "а затем предложи лучшие варианты из каталога.")
+
+
+@nav.message(F.text == B_RCPT)
+async def btn_receipt(m: Message, state: FSMContext):
+    await state.clear()
+    orders = await q("SELECT * FROM orders WHERE uid=? AND status='awaiting_payment' ORDER BY id DESC", (m.from_user.id,))
+    if not orders:
+        return await m.answer("Нет заказов, ожидающих оплаты. Выберите товар — и я помогу оформить заказ 🙂")
+    if len(orders) == 1:
+        return await start_receipt(m.from_user.id, orders[0]["id"], state)
+    cur = await S("currency")
+    await m.answer("По какому заказу чек?", reply_markup=kb(*[[(f"#{o['id']} · {o['total']:g} {cur}", f"rcpt:{o['id']}")] for o in orders[:10]]))
 
 
 @nav.message(F.text == B_HUM)
 async def human_btn(m: Message, state: FSMContext):
+    await state.set_state(St.ask_mgr)
+    await m.answer("Что вы хотите спросить у менеджера? ✍️\nНапишите вопрос одним сообщением — я сразу передам его администраторам.",
+                   reply_markup=cancel_kb())
+
+
+@nav.message(F.text == B_BACK)
+async def back_to_bot(m: Message, state: FSMContext, role: str):
     await state.clear()
-    await do_handoff(m.from_user.id, "Клиент нажал «Менеджер»")
-    await m.answer(await S("handoff_text"), reply_markup=kb([("🤖 Вернуться к ассистенту", "back2bot")]))
+    await q("UPDATE users SET handoff=0 WHERE tg_id=?", (m.from_user.id,), commit=True)
+    await m.answer("🤖 Ассистент снова с вами! Чем помочь?", reply_markup=reply_kb(role))
 
 
-@nav.message(F.text == B_SET, IsAdmin())
-async def open_settings(m: Message, state: FSMContext):
+# ───────────────────────── Клиент: менеджер, инлайн-действия, чеки, ИИ ─────────────────────────
+@cust.message(St.ask_mgr, F.text | F.photo)
+async def ask_manager(m: Message, state: FSMContext, role: str):
+    uid, u = m.from_user.id, await q1("SELECT * FROM users WHERE tg_id=?", (m.from_user.id,))
+    question = (m.text or m.caption or "(фото без подписи)").strip()
     await state.clear()
-    await m.answer("⚙️ Настройки ассистента", reply_markup=await settings_markup())
+    await q("INSERT INTO messages(uid,role,text) VALUES(?,?,?)", (uid, "user", f"[Вопрос менеджеру] {question}"), commit=True)
+    await q("UPDATE users SET handoff=1 WHERE tg_id=?", (uid,), commit=True)
+    head = (f"🙋 Вопрос менеджеру от {u['name']} @{u['username'] or '—'} uid:{uid}\n\n❓ {question}"
+            "\n\n↩️ Отвечайте реплаем на это сообщение — я перешлю клиенту.")
+    for sid in await staff_ids():
+        try:
+            if m.photo:
+                await bot.send_photo(sid, m.photo[-1].file_id, caption=head[:1000], reply_markup=kb([("🤖 Вернуть боту", f"cr:{uid}")]))
+            else:
+                await bot.send_message(sid, head[:4000], reply_markup=kb([("🤖 Вернуть боту", f"cr:{uid}")]))
+        except Exception as e:
+            log.warning("ask_mgr -> %s: %s", sid, e)
+    await m.answer(await S("handoff_text"), reply_markup=reply_kb(role, True))
 
 
-@nav.message(F.text == B_ADM, IsAdmin())
-async def open_panel(m: Message, state: FSMContext):
-    await state.clear()
-    await m.answer("🛠 Админ-панель", reply_markup=await panel_markup())
+@cust.message(St.ask_mgr)
+async def ask_manager_other(m: Message):
+    await m.answer("Напишите вопрос текстом (можно с фото) или нажмите «❌ Отмена».")
 
 
-@nav.message(F.text == B_OWN, IsOwner())
-async def open_owner(m: Message, state: FSMContext):
-    await state.clear()
-    await m.answer("👑 Панель владельца", reply_markup=await owner_markup())
+@cust.callback_query(F.data == "need_human")
+async def cb_need_human(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await state.set_state(St.ask_mgr)
+    await bot.send_message(cb.from_user.id, "Что вы хотите спросить у менеджера? ✍️", reply_markup=cancel_kb())
 
 
-# ───────────────────────── Клиент: инлайн-кнопки, чеки, ИИ ─────────────────────────
 @cust.callback_query(F.data == "back2bot")
-async def cb_back(cb: CallbackQuery):
+async def cb_back(cb: CallbackQuery, role: str):
     await q("UPDATE users SET handoff=0 WHERE tg_id=?", (cb.from_user.id,), commit=True)
     await cb.answer("🤖 Ассистент снова с вами")
-    await safe_send(cb.from_user.id, "Я снова на связи! Чем помочь?")
+    await safe_send(cb.from_user.id, "Я снова на связи! Чем помочь?", reply_kb(role))
 
 
 @cust.callback_query(F.data.startswith("buy:"))
@@ -519,6 +659,21 @@ async def cb_cancel_order(cb: CallbackQuery):
     await show(cb, f"❌ Заказ #{o['id']} отменён.")
 
 
+@cust.callback_query(F.data.startswith("rq:"))
+async def cb_requisites_again(cb: CallbackQuery):
+    o = await q1("SELECT * FROM orders WHERE id=? AND uid=? AND status='awaiting_payment'", (int(cb.data[3:]), cb.from_user.id))
+    if not o:
+        return await cb.answer("Заказ уже не ждёт оплаты", show_alert=True)
+    await cb.answer()
+    await send_requisites(cb.from_user.id, o["id"], json.loads(o["items"]), o["total"])
+
+
+async def start_receipt(uid, oid, state: FSMContext):
+    await state.set_state(St.receipt)
+    await state.update_data(rcpt_order=oid)
+    await bot.send_message(uid, f"Отправьте фото или файл чека по заказу #{oid} 📎\n(«❌ Отмена» — выйти)", reply_markup=cancel_kb())
+
+
 @cust.callback_query(F.data.startswith("rcpt:"))
 async def cb_receipt(cb: CallbackQuery, state: FSMContext):
     o = await q1("SELECT * FROM orders WHERE id=? AND uid=?", (int(cb.data[5:]), cb.from_user.id))
@@ -528,32 +683,86 @@ async def cb_receipt(cb: CallbackQuery, state: FSMContext):
         return await cb.answer("Чек уже на проверке 🔎", show_alert=True)
     if o["status"] != "awaiting_payment":
         return await cb.answer("По этому заказу оплата не требуется", show_alert=True)
-    await state.set_state(St.receipt)
-    await state.update_data(rcpt_order=o["id"])
     await cb.answer()
-    await safe_send(cb.from_user.id, f"Отправьте фото или файл чека по заказу #{o['id']} (/cancel — отмена).")
+    await start_receipt(cb.from_user.id, o["id"], state)
 
 
-@cust.message(StateFilter(None, St.receipt), F.photo | F.document)
-async def got_receipt(m: Message, state: FSMContext):
-    uid = m.from_user.id
-    oid = (await state.get_data()).get("rcpt_order")
-    o = await q1("SELECT * FROM orders WHERE id=? AND uid=?", (oid, uid)) if oid else None
-    if not o or o["status"] != "awaiting_payment":
-        o = await q1("SELECT * FROM orders WHERE uid=? AND status='awaiting_payment' ORDER BY id DESC LIMIT 1", (uid,))
+async def accept_receipt(m: Message, state: FSMContext, role: str, o):
     await state.clear()
-    if not o:
-        return await m.answer("Не нашёл заказов, ожидающих оплаты. Если нужна помощь, нажмите «🙋 Менеджер».")
     file_id, kind = (m.photo[-1].file_id, "photo") if m.photo else (m.document.file_id, "doc")
-    rid = await q("INSERT INTO receipts(order_id,uid,file_id,kind) VALUES(?,?,?,?)", (o["id"], uid, file_id, kind), commit=True)
+    rid = await q("INSERT INTO receipts(order_id,uid,file_id,kind) VALUES(?,?,?,?)", (o["id"], m.from_user.id, file_id, kind), commit=True)
     await q("UPDATE orders SET status='checking' WHERE id=?", (o["id"],), commit=True)
-    await m.answer(f"✅ Чек по заказу #{o['id']} получен и передан на проверку. Мы сообщим результат здесь.")
+    await m.answer(f"✅ Чек по заказу #{o['id']} получен и передан на проверку. Сообщим результат здесь 🙌",
+                   reply_markup=reply_kb(role))
     await push_receipt(rid, await staff_ids())
 
 
-@cust.message(St.receipt, F.text)
-async def receipt_text(m: Message):
-    await m.answer("Пришлите чек фото или файлом. Для отмены — /cancel.")
+async def find_receipt_order(uid, oid=None):
+    o = await q1("SELECT * FROM orders WHERE id=? AND uid=?", (oid, uid)) if oid else None
+    if not o or o["status"] != "awaiting_payment":
+        o = await q1("SELECT * FROM orders WHERE uid=? AND status='awaiting_payment' ORDER BY id DESC LIMIT 1", (uid,))
+    return o
+
+
+@cust.message(St.receipt, F.photo | F.document)
+async def got_receipt(m: Message, state: FSMContext, role: str):
+    oid = (await state.get_data()).get("rcpt_order")
+    o = await find_receipt_order(m.from_user.id, oid)
+    if not o:
+        await state.clear()
+        return await m.answer("Не нашёл заказов, ожидающих оплаты. Если нужна помощь, нажмите «🙋 Менеджер».", reply_markup=reply_kb(role))
+    await accept_receipt(m, state, role, o)
+
+
+@cust.message(St.receipt)
+async def receipt_other(m: Message):
+    await m.answer("Пришлите чек фото или файлом. Для выхода — «❌ Отмена».")
+
+
+@cust.message(StateFilter(None), F.voice)
+async def got_voice(m: Message):
+    if (m.voice.file_size or 0) > 8_000_000:
+        return await m.answer("Голосовое слишком длинное 🙈 Запишите покороче или напишите текстом.")
+    try:
+        await bot.send_chat_action(m.chat.id, "typing")
+    except Exception:
+        pass
+    buf = io.BytesIO()
+    await bot.download(m.voice, destination=buf)
+    text = await gem_media(buf.getvalue(), "audio/ogg", "Расшифруй голосовое сообщение дословно, на языке оригинала. Верни только текст.")
+    if not text:
+        return await m.answer("Не смог разобрать голосовое 🙈 Напишите, пожалуйста, текстом.")
+    await m.answer(f"🎤 Я услышал: «{text[:500]}»")
+    await chat_with_ai(m.from_user.id, text)
+
+
+@cust.message(StateFilter(None), F.photo)
+async def got_photo(m: Message, state: FSMContext, role: str):
+    uid = m.from_user.id
+    if not m.caption:  # фото без подписи при неоплаченном заказе — это чек
+        o = await find_receipt_order(uid)
+        if o:
+            return await accept_receipt(m, state, role, o)
+    try:
+        await bot.send_chat_action(m.chat.id, "typing")
+    except Exception:
+        pass
+    buf = io.BytesIO()
+    await bot.download(m.photo[-1], destination=buf)
+    desc = await gem_media(buf.getvalue(), "image/jpeg",
+                           "Кратко (1–2 предложения) опиши, что на фото. Если это товар — укажи тип, цвет, ключевые особенности.")
+    if not desc:
+        return await m.answer("Не смог разобрать фото 🙈 Опишите словами, что ищете.")
+    text = f"[Клиент прислал фото: {desc}] {m.caption or ''}".strip() + "\nНайди в каталоге подходящие или похожие товары."
+    await chat_with_ai(uid, text)
+
+
+@cust.message(StateFilter(None), F.document)
+async def got_document(m: Message, state: FSMContext, role: str):
+    o = await find_receipt_order(m.from_user.id)
+    if o:
+        return await accept_receipt(m, state, role, o)
+    await m.answer("Получил файл, но заказов, ожидающих оплаты, нет. Нужна помощь — нажмите «🙋 Менеджер».")
 
 
 @cust.message(StateFilter(None), F.text)
@@ -618,18 +827,17 @@ async def cb_receipt_no(cb: CallbackQuery):
     await close_receipt_msgs(rid, f"\n\n❌ Отклонил: {cb.from_user.full_name}")
 
 
-@cust.callback_query(F.data == "need_human")
-async def cb_need_human(cb: CallbackQuery):
-    await do_handoff(cb.from_user.id, "Вопрос по отклонённому чеку")
-    await cb.answer()
-    await safe_send(cb.from_user.id, await S("handoff_text"), kb([("🤖 Вернуться к ассистенту", "back2bot")]))
-
-
-@adm.callback_query(F.data == "rlist")
-async def cb_rlist(cb: CallbackQuery):
+async def rlist_view():
     rs = await q("SELECT * FROM receipts WHERE status='pending' ORDER BY id")
-    await show(cb, "🧾 Чеки на проверке" if rs else "Чеков на проверке нет 🎉",
-               kb(*[[(f"Чек #{r['id']} · заказ #{r['order_id']}", f"rv:{r['id']}")] for r in rs[:20]], [("⬅️ Панель", "panel")]))
+    return ("🧾 Чеки на проверке" if rs else "Чеков на проверке нет 🎉",
+            kb(*[[(f"Чек #{r['id']} · заказ #{r['order_id']}", f"rv:{r['id']}")] for r in rs[:20]]))
+
+
+@adm.message(F.text == B_ARCP)
+async def m_rlist(m: Message, state: FSMContext):
+    await state.clear()
+    t, k = await rlist_view()
+    await m.answer(t, reply_markup=k)
 
 
 @adm.callback_query(F.data.startswith("rv:"))
@@ -643,49 +851,63 @@ async def cb_rview(cb: CallbackQuery):
 
 
 # ───────────────────────── Админ-панель ─────────────────────────
-async def panel_markup():
-    n = (await q1("SELECT COUNT(*) n FROM receipts WHERE status='pending'"))["n"]
-    return kb([("📋 Заказы", "orders"), (f"🧾 Чеки ({n})", "rlist")], [("🛍 Каталог", "cat"), ("⚙️ Настройки", "set")],
-              [("📊 Статистика", "stats"), ("📣 Рассылка", "bcast")])
-
-
-@adm.callback_query(F.data == "panel")
-async def cb_panel(cb: CallbackQuery, state: FSMContext):
+@adm.message(F.text == B_ADM)
+async def open_panel(m: Message, state: FSMContext):
     await state.clear()
-    await show(cb, "🛠 Админ-панель", await panel_markup())
+    n = (await q1("SELECT COUNT(*) n FROM receipts WHERE status='pending'"))["n"]
+    await m.answer(f"🛠 Админ-панель\n🧾 Чеков на проверке: {n}", reply_markup=panel_kb())
 
 
-@adm.callback_query(F.data == "stats")
-async def cb_stats(cb: CallbackQuery):
+@adm.message(F.text == B_ASTAT)
+async def m_stats(m: Message, state: FSMContext):
+    await state.clear()
     rows = await q("SELECT status, COUNT(*) n, COALESCE(SUM(total),0) s FROM orders GROUP BY status")
     cur = await S("currency")
     lines = [f"{ST[r['status']]}: {r['n']} шт. / {r['s']:g} {cur}" for r in rows] or ["Заказов пока нет"]
     rev = sum(r["s"] for r in rows if r["status"] in ("paid", "shipped", "done"))
     users = (await q1("SELECT COUNT(*) n FROM users"))["n"]
     pend = (await q1("SELECT COUNT(*) n FROM receipts WHERE status='pending'"))["n"]
-    await show(cb, "📊 Статистика\n\n" + "\n".join(lines) + f"\n\n💰 Выручка: {rev:g} {cur}\n👥 Пользователей: {users}\n🧾 Чеков на проверке: {pend}",
-               kb([("⬅️ Панель", "panel")]))
+    await m.answer("📊 Статистика\n\n" + "\n".join(lines) + f"\n\n💰 Выручка: {rev:g} {cur}\n👥 Пользователей: {users}\n🧾 Чеков на проверке: {pend}")
 
 
 # Заказы
-@adm.callback_query(F.data == "orders")
-async def cb_orders(cb: CallbackQuery):
+async def orders_view():
     rows = await q("SELECT * FROM orders ORDER BY id DESC LIMIT 15")
     cur = await S("currency")
-    await show(cb, "📋 Последние заказы" if rows else "Заказов пока нет",
-               kb(*[[(f"#{o['id']} {ST[o['status']][:2]} {o['total']:g}{cur} {o['name']}", f"o:{o['id']}")] for o in rows], [("⬅️ Панель", "panel")]))
+    return ("📋 Последние заказы" if rows else "Заказов пока нет",
+            kb(*[[(f"#{o['id']} {ST[o['status']][:2]} {o['total']:g}{cur} {o['name']}", f"o:{o['id']}")] for o in rows]))
+
+
+async def order_view(oid):
+    o = await q1("SELECT * FROM orders WHERE id=?", (oid,))
+    if not o:
+        return None, None
+    cur = await S("currency")
+    st = [[(v, f"os:{o['id']}:{k}")] for k, v in ST.items() if k != o["status"]]
+    text = (f"Заказ #{o['id']} — {ST[o['status']]}\n{o['ts']}\n\n{fmt_items(json.loads(o['items']))}\nИтого: {o['total']:g} {cur}\n"
+            f"👤 {o['name']}  📞 {o['phone'] or '—'}\n📍 {o['address'] or '—'}\n💬 {o['comment'] or '—'}\nuid:{o['uid']}")
+    return text, kb(*st, [("⬅️ К заказам", "orders")])
+
+
+@adm.message(F.text == B_AORD)
+async def m_orders(m: Message, state: FSMContext):
+    await state.clear()
+    t, k = await orders_view()
+    await m.answer(t, reply_markup=k)
+
+
+@adm.callback_query(F.data == "orders")
+async def cb_orders(cb: CallbackQuery):
+    t, k = await orders_view()
+    await show(cb, t, k)
 
 
 @adm.callback_query(F.data.startswith("o:"))
 async def cb_order(cb: CallbackQuery):
-    o = await q1("SELECT * FROM orders WHERE id=?", (int(cb.data[2:]),))
-    if not o:
+    t, k = await order_view(int(cb.data[2:]))
+    if not t:
         return await cb.answer("Не найден")
-    cur = await S("currency")
-    st = [[(v, f"os:{o['id']}:{k}")] for k, v in ST.items() if k != o["status"]]
-    await show(cb, f"Заказ #{o['id']} — {ST[o['status']]}\n{o['ts']}\n\n{fmt_items(json.loads(o['items']))}\nИтого: {o['total']:g} {cur}\n"
-                   f"👤 {o['name']}  📞 {o['phone'] or '—'}\n📍 {o['address'] or '—'}\n💬 {o['comment'] or '—'}\nuid:{o['uid']}",
-               kb(*st, [("⬅️ К заказам", "orders")]))
+    await show(cb, t, k)
 
 
 @adm.callback_query(F.data.startswith("os:"))
@@ -698,19 +920,30 @@ async def cb_order_status(cb: CallbackQuery):
         await restore_stock(json.loads(o["items"]))
     await q("UPDATE orders SET status=? WHERE id=?", (st, oid), commit=True)
     await safe_send(o["uid"], f"Статус заказа #{oid}: {ST[st]}")
-    cb.data = f"o:{oid}"
-    await cb_order(cb)
+    t, k = await order_view(int(oid))
+    await show(cb, t, k)
 
 
 # Каталог
+async def cat_view():
+    cur = await S("currency")
+    ps = await q("SELECT * FROM products ORDER BY id")
+    return ("🗂 Товары" if ps else "Каталог пуст. Нажмите «➕ Добавить товар» внизу 👇",
+            kb(*[[(f"{p['name']} — {p['price']:g}{cur} ({p['stock']} шт.)", f"p:{p['id']}")] for p in ps]))
+
+
+@adm.message(F.text == B_ACAT)
+async def m_cat(m: Message, state: FSMContext):
+    await state.clear()
+    t, k = await cat_view()
+    await m.answer(t, reply_markup=k)
+
+
 @adm.callback_query(F.data == "cat")
 async def cb_cat(cb: CallbackQuery, state: FSMContext):
     await state.clear()
-    cur = await S("currency")
-    ps = await q("SELECT * FROM products ORDER BY id")
-    await show(cb, "🛍 Каталог" if ps else "Каталог пуст. Добавьте первый товар 👇",
-               kb(*[[(f"{p['name']} — {p['price']:g}{cur} ({p['stock']} шт.)", f"p:{p['id']}")] for p in ps],
-                  [("➕ Добавить товар", "cat_add")], [("⬅️ Панель", "panel")]))
+    t, k = await cat_view()
+    await show(cb, t, k)
 
 
 @adm.callback_query(F.data.startswith("p:"))
@@ -724,18 +957,20 @@ async def cb_prod(cb: CallbackQuery, state: FSMContext):
     await show(cb, f"{p['name']}\nЦена: {p['price']:g} {cur}\nОстаток: {p['stock']}\nОписание: {p['description'] or '—'}",
                kb([("✏️ Название", f"pe:{pid}:name"), ("💰 Цена", f"pe:{pid}:price")],
                   [("📦 Остаток", f"pe:{pid}:stock"), ("📝 Описание", f"pe:{pid}:description")],
-                  [("🗑 Удалить", f"pd:{pid}")], [("⬅️ Каталог", "cat")]))
+                  [("🗑 Удалить", f"pd:{pid}")], [("⬅️ Товары", "cat")]))
 
 
 @adm.callback_query(F.data.startswith("pd:"))
 async def cb_prod_del(cb: CallbackQuery):
     await q("DELETE FROM products WHERE id=?", (int(cb.data[3:]),), commit=True)
-    await show(cb, "🗑 Удалено", kb([("⬅️ Каталог", "cat")]))
+    await show(cb, "🗑 Удалено", kb([("⬅️ Товары", "cat")]))
 
 
 @adm.callback_query(F.data.startswith("pe:"))
 async def cb_prod_edit(cb: CallbackQuery, state: FSMContext):
     _, pid, field = cb.data.split(":")
+    if field not in ("name", "price", "stock", "description"):
+        return await cb.answer()
     await state.set_state(St.prod_edit)
     await state.update_data(pid=int(pid), field=field)
     await show(cb, "Отправьте новое значение (/cancel — отмена):")
@@ -756,10 +991,10 @@ async def prod_edit_val(m: Message, state: FSMContext):
     await m.answer("✅ Сохранено", reply_markup=kb([("⬅️ К товару", f"p:{d['pid']}")]))
 
 
-@adm.callback_query(F.data == "cat_add")
-async def cb_cat_add(cb: CallbackQuery, state: FSMContext):
+@adm.message(F.text == B_AADD)
+async def cat_add(m: Message, state: FSMContext):
     await state.set_state(St.cat_name)
-    await show(cb, "Название товара? (/cancel — отмена)")
+    await m.answer("Название товара?", reply_markup=cancel_kb())
 
 
 @adm.message(St.cat_name, F.text)
@@ -795,7 +1030,7 @@ async def add_desc(m: Message, state: FSMContext):
     desc = "" if m.text.strip() == "-" else m.text.strip()
     await q("INSERT INTO products(name,price,stock,description) VALUES(?,?,?,?)", (d["name"], d["price"], d["stock"], desc), commit=True)
     await state.clear()
-    await m.answer(f"✅ Добавлено: {d['name']}", reply_markup=kb([("➕ Ещё", "cat_add")], [("⬅️ Каталог", "cat")]))
+    await m.answer(f"✅ Добавлено: {d['name']}\nМожно добавить ещё — нажмите «➕ Добавить товар».", reply_markup=panel_kb())
 
 
 # Настройки ассистента
@@ -807,8 +1042,13 @@ async def settings_markup():
         v = await S(k)
         pv = ("✅" if v == "1" else "⛔") if t == "toggle" else (v if isinstance(t, list) else ("✓" if v else "—"))
         rows.append([(f"{label}: {pv}"[:60], f"s:{k}")])
-    rows.append([("⬅️ Панель", "panel")])
     return kb(*rows)
+
+
+@adm.message(F.text == B_SET)
+async def open_settings(m: Message, state: FSMContext):
+    await state.clear()
+    await m.answer("⚙️ Настройки ассистента", reply_markup=await settings_markup())
 
 
 @adm.callback_query(F.data == "set")
@@ -829,10 +1069,44 @@ async def cb_set_one(cb: CallbackQuery, state: FSMContext):
     if isinstance(t, list):
         return await show(cb, f"{label}\nСейчас: {await S(key)}",
                           kb(*[[(o, f"sc:{key}:{i}")] for i, o in enumerate(t)], [("⬅️ Назад", "set")]))
+    if t == "photo":
+        await state.set_state(St.set_photo)
+        has = bool(await S(key))
+        return await show(cb, f"{label}\n\nСейчас: {'загружено ✅' if has else 'нет'}\n\n"
+                              "Отправьте картинку с QR-кодом (или скриншот реквизитов) как ФОТО. "
+                              "Подпись к фото, если она есть, станет текстом реквизитов. Клиент получит картинку вместе с заказом.\n(/cancel — отмена)",
+                          kb([("🗑 Убрать фото", "rphoto_del")], [("⬅️ Назад", "set")]))
     await state.set_state(St.set_val)
     await state.update_data(key=key)
     await show(cb, f"{label}\n\nСейчас:\n{(await S(key))[:3000] or '—'}\n\nОтправьте новое значение («-» очистить, /cancel — отмена)",
                kb([("↩️ По умолчанию", f"sr:{key}")], [("⬅️ Назад", "set")]))
+
+
+@adm.callback_query(F.data == "rphoto_del")
+async def cb_rphoto_del(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await set_S("requisites_photo", "")
+    await show(cb, "🗑 Фото убрано.\n\n⚙️ Настройки ассистента", await settings_markup())
+
+
+@adm.message(St.set_photo, F.photo | F.document)
+async def set_photo(m: Message, state: FSMContext):
+    if m.photo:
+        v = "photo:" + m.photo[-1].file_id
+    elif m.document and (m.document.mime_type or "").startswith("image/"):
+        v = "doc:" + m.document.file_id
+    else:
+        return await m.answer("Нужна картинка (фото QR-кода).")
+    await set_S("requisites_photo", v)
+    if m.caption:
+        await set_S("requisites", m.caption.strip())
+    await state.clear()
+    await m.answer("✅ QR / фото сохранено. Клиенты получат его вместе с реквизитами.", reply_markup=await settings_markup())
+
+
+@adm.message(St.set_photo)
+async def set_photo_other(m: Message):
+    await m.answer("Пришлите картинку (QR-код) или нажмите /cancel.")
 
 
 @adm.callback_query(F.data.startswith("sc:"))
@@ -850,34 +1124,57 @@ async def cb_set_reset(cb: CallbackQuery, state: FSMContext):
 
 
 @adm.message(St.set_val, F.text)
-async def set_val(m: Message, state: FSMContext):
+async def set_val(m: Message, state: FSMContext, role: str):
     key, val = (await state.get_data())["key"], m.text.strip()
     if val == "-":
         val = ""
-    if key in ("temperature", "min_order") and val:
+    if key == "min_order" and val:
         try:
             x = float(val.replace(",", "."))
-            assert 0 <= x <= (2 if key == "temperature" else 10 ** 9)
+            assert 0 <= x <= 10 ** 9
             val = val.replace(",", ".")
         except Exception:
-            return await m.answer("Нужно число (для температуры 0–2)")
+            return await m.answer("Нужно число")
     await set_S(key, val)
     await state.clear()
+    if key == "offer":
+        return await m.answer("✅ Сохранено. ИИ будет предлагать это покупателям." if val else "✅ Очищено.",
+                              reply_markup=reply_kb(role))
     await m.answer("✅ Сохранено", reply_markup=await settings_markup())
 
 
+# 💡 Что предлагать покупателям (видна только админам и владельцу)
+@adm.message(F.text == B_OFFER)
+async def offer_btn(m: Message, state: FSMContext):
+    await state.set_state(St.set_val)
+    await state.update_data(key="offer")
+    cur = await S("offer")
+    await m.answer("💡 Что предлагать покупателям\n\n"
+                   "Напишите, что ИИ-продавец должен продвигать в первую очередь: товар, комплект, акцию или условие. "
+                   "Например: «Предлагай чехол к каждому телефону» или «Скидка 10% на второй товар до воскресенья». "
+                   "ИИ будет упоминать это в разговорах и не станет придумывать другие скидки.\n\n"
+                   f"Сейчас: {cur or 'не задано'}\n\nОтправьте новый текст («-» — очистить, «❌ Отмена» — выйти).",
+                   reply_markup=cancel_kb())
+
+
 # Рассылка
-@adm.callback_query(F.data == "bcast")
-async def cb_bcast(cb: CallbackQuery, state: FSMContext):
+@adm.message(F.text == B_ABC)
+async def bcast_start(m: Message, state: FSMContext):
     await state.set_state(St.bcast)
-    await show(cb, "📣 Пришлите текст рассылки для всех пользователей (/cancel — отмена)")
+    await m.answer("📣 Пришлите текст рассылки для всех пользователей.", reply_markup=cancel_kb())
 
 
 @adm.message(St.bcast, F.text)
 async def bcast_text(m: Message, state: FSMContext):
     await state.update_data(text=m.text)
     n = (await q1("SELECT COUNT(*) n FROM users WHERE role!='banned'"))["n"]
-    await m.answer(f"Отправить {n} получателям?\n\n{m.text[:1500]}", reply_markup=kb([("✅ Отправить", "bc_go")], [("Отмена", "panel")]))
+    await m.answer(f"Отправить {n} получателям?\n\n{m.text[:1500]}", reply_markup=kb([("✅ Отправить", "bc_go"), ("Отмена", "bc_no")]))
+
+
+@adm.callback_query(F.data == "bc_no")
+async def bcast_no(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await show(cb, "Рассылка отменена.")
 
 
 @adm.callback_query(F.data == "bc_go")
@@ -895,7 +1192,7 @@ async def bcast_go(cb: CallbackQuery, state: FSMContext):
         except Exception:
             pass
         await asyncio.sleep(0.05)
-    await safe_send(cb.from_user.id, f"✅ Доставлено: {ok}")
+    await safe_send(cb.from_user.id, f"✅ Доставлено: {ok}", panel_kb())
 
 
 # Ответ клиенту реплаем + возврат боту
@@ -910,19 +1207,12 @@ async def reply_to_client(m: Message, cuid: int):
 async def cb_release(cb: CallbackQuery):
     uid = int(cb.data[3:])
     await q("UPDATE users SET handoff=0 WHERE tg_id=?", (uid,), commit=True)
+    urole = (await q1("SELECT role FROM users WHERE tg_id=?", (uid,)) or {}).get("role", "customer")
     await cb.answer("🤖 Диалог возвращён боту", show_alert=True)
-    await safe_send(uid, "Я снова на связи! Чем помочь?")
+    await safe_send(uid, "Я снова на связи! Чем помочь?", reply_kb(urole))
 
 
 # ───────────────────────── Панель владельца ─────────────────────────
-async def owner_markup():
-    on = await S("bot_enabled") == "1"
-    return kb([("🛡 Назначить админа", "oa:admin"), ("👥 Админы", "olist:admin")],
-              [("🚫 Забанить", "oa:ban"), ("♻️ Забаненные", "olist:banned")],
-              [("👤 Пользователи", "olist:customer"), ("👑 Передать права", "oa:transfer")],
-              [("🔴 Выключить бота" if on else "🟢 Включить бота", "otoggle")])
-
-
 async def find_user(text):
     t = text.strip().lstrip("@").lower()
     return await q1("SELECT * FROM users WHERE tg_id=?", (int(t),)) if t.isdigit() else await q1("SELECT * FROM users WHERE username=?", (t,))
@@ -935,20 +1225,30 @@ async def apply_role(target, role):
     await safe_send(target, msg, ReplyKeyboardRemove() if role == "banned" else reply_kb(role))
 
 
-@own.callback_query(F.data == "otoggle")
-async def cb_otoggle(cb: CallbackQuery):
-    await set_S("bot_enabled", "0" if await S("bot_enabled") == "1" else "1")
-    await show(cb, "👑 Панель владельца", await owner_markup())
+@own.message(F.text == B_OWN)
+async def open_owner(m: Message, state: FSMContext):
+    await state.clear()
+    await m.answer("👑 Панель владельца", reply_markup=owner_kb(await S("bot_enabled") == "1"))
 
 
-@own.callback_query(F.data.startswith("oa:"))
-async def cb_oa(cb: CallbackQuery, state: FSMContext):
-    action = cb.data[3:]
+@own.message(F.text.in_({B_OON, B_OOFF}))
+async def owner_toggle(m: Message, state: FSMContext):
+    await state.clear()
+    turn_on = m.text == B_OOFF  # кнопка «🟢 Включить бота»
+    await set_S("bot_enabled", "1" if turn_on else "0")
+    await m.answer("🟢 Бот включён." if turn_on else "🔴 Бот выключен: клиентам отвечает заглушка.", reply_markup=owner_kb(turn_on))
+
+
+ACTIONS = {B_OADM: ("admin", "назначить админом"), B_OBAN: ("ban", "забанить"), B_OTR: ("transfer", "передать права владельца")}
+
+
+@own.message(F.text.in_(set(ACTIONS)))
+async def owner_action(m: Message, state: FSMContext):
+    action, what = ACTIONS[m.text]
     await state.set_state(St.own_target)
     await state.update_data(action=action)
-    what = {"admin": "назначить админом", "ban": "забанить", "transfer": "передать права владельца"}[action]
-    await show(cb, f"Отправьте @username или id пользователя, которого нужно {what}.\n"
-                   "Он должен хотя бы раз написать боту. (/cancel — отмена)")
+    await m.answer(f"Отправьте @username или id пользователя, которого нужно {what}.\n"
+                   "Он должен хотя бы раз написать боту.", reply_markup=cancel_kb())
 
 
 @own.message(St.own_target, F.text)
@@ -956,30 +1256,35 @@ async def own_target(m: Message, state: FSMContext):
     action = (await state.get_data())["action"]
     u = await find_user(m.text)
     if not u:
-        return await m.answer("Не нашёл. Пусть он сначала напишет боту /start. Ещё раз или /cancel")
+        return await m.answer("Не нашёл. Пусть он сначала напишет боту /start. Ещё раз или «❌ Отмена»")
     if u["tg_id"] == m.from_user.id:
         return await m.answer("Это вы 🙂 Укажите другого пользователя.")
     await state.clear()
     if action == "transfer":
         return await m.answer(f"⚠️ Передать права владельца: {u['name']} @{u['username'] or '—'}?\nВы станете админом.",
-                              reply_markup=kb([("✅ Да, передать", f"otc:{u['tg_id']}")], [("Отмена", "ohome")]))
+                              reply_markup=kb([("✅ Да, передать", f"otc:{u['tg_id']}"), ("Отмена", "ohome")]))
     await apply_role(u["tg_id"], "admin" if action == "admin" else "banned")
-    await m.answer(f"✅ {u['name']}: {'назначен админом' if action == 'admin' else 'забанен'}", reply_markup=kb([("⬅️ Панель владельца", "ohome")]))
+    await m.answer(f"✅ {u['name']}: {'назначен админом' if action == 'admin' else 'забанен'}", reply_markup=owner_kb(await S("bot_enabled") == "1"))
 
 
 @own.callback_query(F.data == "ohome")
 async def cb_ohome(cb: CallbackQuery, state: FSMContext):
     await state.clear()
-    await show(cb, "👑 Панель владельца", await owner_markup())
+    await show(cb, "Отменено.")
 
 
-@own.callback_query(F.data.startswith("olist:"))
-async def cb_olist(cb: CallbackQuery):
-    role = cb.data[6:]
+async def olist_view(role):
     us = await q("SELECT * FROM users WHERE role=? ORDER BY ts DESC LIMIT 20", (role,))
     title = {"admin": "👥 Админы", "banned": "♻️ Забаненные", "customer": "👤 Пользователи (последние 20)"}[role]
-    await show(cb, title if us else title + "\n\nСписок пуст",
-               kb(*[[(f"{u['name']} @{u['username'] or '—'}", f"ou:{u['tg_id']}")] for u in us], [("⬅️ Назад", "ohome")]))
+    return (title if us else title + "\n\nСписок пуст"), kb(*[[(f"{u['name']} @{u['username'] or '—'}", f"ou:{u['tg_id']}")] for u in us])
+
+
+@own.message(F.text.in_({B_OLADM, B_OLBAN, B_OUSR}))
+async def owner_list(m: Message, state: FSMContext):
+    await state.clear()
+    role = {B_OLADM: "admin", B_OLBAN: "banned", B_OUSR: "customer"}[m.text]
+    t, k = await olist_view(role)
+    await m.answer(t, reply_markup=k)
 
 
 @own.callback_query(F.data.startswith("ou:"))
@@ -995,7 +1300,7 @@ async def cb_ouser(cb: CallbackQuery):
         if u["role"] == "banned": rows.append([("♻️ Разбанить", f"orole:{uid}:customer")])
         else: rows.append([("🚫 Забанить", f"orole:{uid}:banned")])
         rows.append([("👑 Передать права", f"ot:{uid}")])
-    await show(cb, f"{ICON[u['role']]} {u['name']} @{u['username'] or '—'}\nid {uid}\nРоль: {u['role']}", kb(*rows, [("⬅️ Назад", "ohome")]))
+    await show(cb, f"{ICON[u['role']]} {u['name']} @{u['username'] or '—'}\nid {uid}\nРоль: {u['role']}", kb(*rows))
 
 
 @own.callback_query(F.data.startswith("orole:"))
@@ -1006,15 +1311,17 @@ async def cb_orole(cb: CallbackQuery):
     if uid == cb.from_user.id or not u or u["role"] == "owner" or role not in ("admin", "customer", "banned"):
         return await cb.answer("Нельзя", show_alert=True)
     await apply_role(uid, role)
-    await show(cb, f"✅ {u['name']}: роль → {role}", kb([("⬅️ Панель владельца", "ohome")]))
+    await show(cb, f"✅ {u['name']}: роль → {role}")
 
 
 @own.callback_query(F.data.startswith("ot:"))
 async def cb_ot(cb: CallbackQuery):
     uid = int(cb.data[3:])
     u = await q1("SELECT * FROM users WHERE tg_id=?", (uid,))
+    if not u:
+        return await cb.answer()
     await show(cb, f"⚠️ Передать права владельца: {u['name']} @{u['username'] or '—'}?\nВы станете админом.",
-               kb([("✅ Да, передать", f"otc:{uid}")], [("Отмена", "ohome")]))
+               kb([("✅ Да, передать", f"otc:{uid}"), ("Отмена", "ohome")]))
 
 
 @own.callback_query(F.data.startswith("otc:"))
@@ -1027,6 +1334,37 @@ async def cb_otc(cb: CallbackQuery):
     await safe_send(new, "👑 Вам переданы права владельца бота!", reply_kb("owner"))
     await safe_send(cb.from_user.id, "Теперь вы администратор.", reply_kb("admin"))
     await show(cb, "✅ Права владельца переданы.")
+
+
+# ───────────────────────── Напоминания об оплате ─────────────────────────
+REMIND_AFTER = [30, 180, 1440]  # минуты с момента заказа
+
+
+async def reminder_loop():
+    """ИИ-продавец не бросает заказ: мягко напоминает об оплате (через 30 мин, 3 ч, 24 ч)."""
+    while True:
+        await asyncio.sleep(300)
+        try:
+            if await S("bot_enabled") != "1":
+                continue
+            cur = await S("currency")
+            rows = await q("SELECT *, (julianday('now')-julianday(ts))*1440 AS age FROM orders "
+                           "WHERE status='awaiting_payment' AND reminded<3")
+            for o in rows:
+                n = o["reminded"] or 0
+                if n >= 3 or o["age"] < REMIND_AFTER[n]:
+                    continue
+                if not await qrc("UPDATE orders SET reminded=reminded+1 WHERE id=? AND status='awaiting_payment' AND reminded=?", (o["id"], n)):
+                    continue
+                texts = [
+                    f"👋 Ваш заказ #{o['id']} на {o['total']:g} {cur} ждёт оплаты. Осталось оплатить по реквизитам и нажать «🧾 Отправить чек» — и мы сразу возьмём заказ в работу 🙂",
+                    f"Напоминаю про заказ #{o['id']} ({o['total']:g} {cur}): товар закреплён за вами, остаётся только оплатить. Есть вопросы или сомнения? Напишите — помогу!",
+                    f"Последнее напоминание по заказу #{o['id']}. Если всё в силе — оплатите и пришлите чек. Если передумали, заказ можно отменить в «📦 Мои заказы», а я подберу другой вариант 😊",
+                ]
+                await safe_send(o["uid"], texts[n], kb([("💳 Реквизиты ещё раз", f"rq:{o['id']}")],
+                                                       [("🧾 Я оплатил(а) — отправить чек", f"rcpt:{o['id']}")]))
+        except Exception:
+            log.exception("reminders")
 
 
 # ───────────────────────── ЗАПУСК ─────────────────────────
@@ -1054,6 +1392,7 @@ async def main():
     await init_db()
     await health_server()
     asyncio.create_task(keepalive())
+    asyncio.create_task(reminder_loop())
     dp = Dispatcher()
     dp.message.outer_middleware(Gate())
     dp.callback_query.outer_middleware(Gate())
