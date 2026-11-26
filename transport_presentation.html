@@ -1,0 +1,66 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Transport and the Environment</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Space+Grotesk:wght@500;700&display=swap"><style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0}
+#stage section{box-sizing:border-box;width:1920px;height:1080px;overflow:hidden;display:none}
+#stage section.on{display:flex}
+#hint{position:fixed;bottom:8px;right:12px;color:#888;font:14px sans-serif}
+section{position:relative;padding:128px;background:#10241f;color:#f4f1e8;font-family:'Inter',sans-serif;display:flex;flex-direction:column}
+section.light{background:#f4f1e8;color:#10241f}
+h1,h2,h3{font-family:'Space Grotesk',sans-serif;margin:0}
+h1{font-size:132px;line-height:1.05}
+h2{font-size:80px;line-height:1.1;margin-bottom:56px}
+h3{font-size:40px;margin-bottom:14px}
+p{font-size:30px;line-height:1.4;margin:0}
+.sub{font-size:44px;opacity:.85;margin-top:32px}
+.acc{color:#3fb27f}
+.cards{display:flex;gap:32px}
+.card{flex:1;background:#1b3a32;border-radius:24px;padding:40px}
+.light .card{background:#e6e1d2}
+.card svg{width:120px;height:120px;margin-bottom:24px}
+.big{font-family:'Space Grotesk',sans-serif;font-size:150px;font-weight:700;color:#3fb27f;line-height:1;margin-bottom:16px}
+.note{font-size:24px;opacity:.7;margin-top:auto}
+.scene{position:absolute;left:0;bottom:0;width:1920px;height:300px}
+.rise{animation:rise .8s ease-out both}
+.d1{animation-delay:.2s}.d2{animation-delay:.5s}.d3{animation-delay:.8s}.d4{animation-delay:1.1s}
+@keyframes rise{from{opacity:0;transform:translateY(40px)}}
+.row{display:flex;align-items:center;gap:32px;margin-bottom:30px}
+.lbl{width:240px;font-size:36px;font-weight:600}
+.bar{height:56px;border-radius:12px;transform-origin:left;animation:grow 1.1s ease-out both}
+.val{font-size:32px}
+@keyframes grow{from{transform:scaleX(0)}}
+.tips p{font-size:44px;margin-bottom:28px}
+</style></head><body><div id="stage">
+<section id="cover" data-transition="fade"><h1 class="rise">Transport and<br><span class="acc">the Environment</span></h1><p class="sub rise d2">How the way we move shapes our planet</p><svg class="scene" viewBox="0 0 1920 300" aria-label="Road with a moving vehicle"><path d="M0 200 Q400 120 800 190 T1600 170 T1920 180 V300 H0Z" fill="#1b3a32"/><rect y="236" width="1920" height="64" fill="#2a2f2e"/><path d="M0 268 H1920" stroke="#f4f1e8" stroke-width="4" stroke-dasharray="40 30"/><circle cx="1640" cy="90" r="60" fill="#f2994a"><animate attributeName="r" values="60;68;60" dur="4s" repeatCount="indefinite"/></circle><g><g transform="translate(0 214)"><rect y="-34" width="150" height="40" rx="10" fill="#3fb27f"/><rect x="30" y="-64" width="84" height="36" rx="12" fill="#3fb27f"/><rect x="42" y="-58" width="60" height="24" rx="6" fill="#d9f0e6"/><circle cx="34" cy="8" r="16" fill="#111"/><circle cx="116" cy="8" r="16" fill="#111"/></g><animateTransform attributeName="transform" type="translate" from="-200 0" to="2100 0" dur="9s" repeatCount="indefinite"/></g></svg></section>
+
+<section id="emissions" data-transition="fade"><h2 class="rise">Transport is a major source of CO₂</h2><div class="cards"><div class="card rise d1"><div class="big">≈23%</div><h3>of energy-related CO₂</h3><p>Moving people and goods produces nearly a quarter of global emissions.</p></div><div class="card rise d2"><div class="big">≈75%</div><h3>comes from roads</h3><p>Cars, trucks and buses cause most of transport's emissions.</p></div><div class="card rise d3"><div class="big">≈5%</div><h3>air and sea</h3><p>Planes and ships together add a smaller but fast-growing share.</p></div></div><p class="note">Approximate global figures; sources such as the IEA.</p></section>
+
+<section id="effects" class="light" data-transition="fade"><h2 class="rise">More than climate change</h2><div class="cards">
+<div class="card rise d1"><svg viewBox="0 0 120 120" aria-label="Smoke cloud"><g fill="#f2994a"><circle cx="40" cy="70" r="24"/><circle cx="70" cy="55" r="30"/><circle cx="92" cy="75" r="20"/><rect x="30" y="70" width="70" height="24"/></g></svg><h3>Air pollution</h3><p>Exhaust gases and fine particles cause smog and harm our lungs.</p></div>
+<div class="card rise d2"><svg viewBox="0 0 120 120" aria-label="Loud speaker"><polygon points="15,45 40,45 65,22 65,98 40,75 15,75" fill="#f2994a"/><path d="M80 45 Q95 60 80 75 M92 32 Q120 60 92 88" fill="none" stroke="#f2994a" stroke-width="7" stroke-linecap="round"/></svg><h3>Noise</h3><p>Traffic noise disturbs sleep, health and wildlife.</p></div>
+<div class="card rise d3"><svg viewBox="0 0 120 120" aria-label="Road"><polygon points="45,10 75,10 112,110 8,110" fill="#444"/><path d="M60 18 V102" stroke="#f4f1e8" stroke-width="6" stroke-dasharray="14 10"/></svg><h3>Land use</h3><p>Roads and parking lots replace forests and fields, splitting habitats.</p></div>
+<div class="card rise d4"><svg viewBox="0 0 120 120" aria-label="Oil drop"><path d="M60 10 C90 50 100 70 100 82 A40 40 0 0 1 20 82 C20 70 30 50 60 10Z" fill="#2a2f2e"/></svg><h3>Oil and water</h3><p>Spills and ship waste pollute seas, rivers and coasts.</p></div></div></section>
+
+<section id="compare" data-transition="fade"><h2 class="rise">Not all journeys are equal</h2><p style="margin-bottom:40px">CO₂ per passenger for each kilometre (grams, approx.)</p>
+<div class="row"><div class="lbl">Plane</div><div class="bar" style="width:1000px;background:#e0584a;animation-delay:.2s"></div><div class="val">~250</div></div>
+<div class="row"><div class="lbl">Car</div><div class="bar" style="width:680px;background:#f2994a;animation-delay:.5s"></div><div class="val">~170</div></div>
+<div class="row"><div class="lbl">Bus</div><div class="bar" style="width:400px;background:#e6c84a;animation-delay:.8s"></div><div class="val">~100</div></div>
+<div class="row"><div class="lbl">Train</div><div class="bar" style="width:160px;background:#3fb27f;animation-delay:1.1s"></div><div class="val">~40</div></div>
+<div class="row"><div class="lbl">Bicycle</div><div class="bar" style="width:8px;background:#3fb27f;animation-delay:1.4s"></div><div class="val">0</div></div>
+<p class="note">Averages only; real values depend on the country, fuel and number of passengers.</p></section>
+
+<section id="solutions" class="light" data-transition="fade"><h2 class="rise">Cleaner ways to move</h2><div class="cards">
+<div class="card rise d1"><svg viewBox="0 0 120 120" aria-label="Lightning bolt"><polygon points="65,8 28,66 55,66 45,112 92,50 62,50" fill="#3fb27f"/></svg><h3>Electric vehicles</h3><p>No exhaust, and even cleaner when charged with green power.</p></div>
+<div class="card rise d2"><svg viewBox="0 0 120 120" aria-label="Bus"><rect x="12" y="20" width="96" height="70" rx="12" fill="#3fb27f"/><rect x="22" y="30" width="30" height="26" rx="4" fill="#d9f0e6"/><rect x="62" y="30" width="36" height="26" rx="4" fill="#d9f0e6"/><circle cx="36" cy="94" r="12" fill="#222"/><circle cx="84" cy="94" r="12" fill="#222"/></svg><h3>Public transport</h3><p>One full bus can take dozens of cars off the road.</p></div>
+<div class="card rise d3"><svg viewBox="0 0 120 120" aria-label="Bicycle"><g fill="none" stroke="#3fb27f" stroke-width="7" stroke-linecap="round"><circle cx="28" cy="80" r="22"/><circle cx="92" cy="80" r="22"/><path d="M28 80 L55 42 L92 80 M55 42 H76"/></g></svg><h3>Walk and cycle</h3><p>Zero emissions for short trips, and good for your health.</p></div>
+<div class="card rise d4"><svg viewBox="0 0 120 120" aria-label="Leaf"><path d="M18 102 C18 42 58 14 106 14 C106 66 76 106 18 102Z" fill="#3fb27f"/><path d="M18 102 L70 50" stroke="#d9f0e6" stroke-width="5"/></svg><h3>Cleaner fuels</h3><p>Hydrogen and biofuels for planes, ships and heavy trucks.</p></div></div></section>
+
+<section id="closing" data-transition="fade"><h2 class="rise">Every trip is a <span class="acc">choice</span></h2><div class="tips"><p class="rise d1">🚶 Walk or cycle for short distances</p><p class="rise d2">🚆 Choose trains and buses when you can</p><p class="rise d3">🤝 Share rides and fly less</p></div><svg class="scene" viewBox="0 0 1920 300" aria-label="Road with a moving vehicle"><path d="M0 200 Q400 120 800 190 T1600 170 T1920 180 V300 H0Z" fill="#1b3a32"/><rect y="236" width="1920" height="64" fill="#2a2f2e"/><path d="M0 268 H1920" stroke="#f4f1e8" stroke-width="4" stroke-dasharray="40 30"/><g><g transform="translate(0 228)"><rect y="-50" width="520" height="56" rx="14" fill="#3fb27f"/><rect x="20" y="-40" width="60" height="26" rx="4" fill="#d9f0e6"/><rect x="100" y="-40" width="60" height="26" rx="4" fill="#d9f0e6"/><rect x="180" y="-40" width="60" height="26" rx="4" fill="#d9f0e6"/><rect x="260" y="-40" width="60" height="26" rx="4" fill="#d9f0e6"/><rect x="340" y="-40" width="60" height="26" rx="4" fill="#d9f0e6"/><rect x="440" y="-40" width="60" height="26" rx="4" fill="#d9f0e6"/><circle cx="60" cy="10" r="12" fill="#111"/><circle cx="460" cy="10" r="12" fill="#111"/></g><animateTransform attributeName="transform" type="translate" from="-600 0" to="2000 0" dur="8s" repeatCount="indefinite"/></g></svg></section>
+
+</div><div id="hint">← → / click to navigate</div><script>
+const s=[...document.querySelectorAll("#stage section")],st=document.getElementById("stage");let i=0;
+function fit(){const k=Math.min(innerWidth/1920,innerHeight/1080);st.style.transform="translate("+(innerWidth-1920*k)/2+"px,"+(innerHeight-1080*k)/2+"px) scale("+k+")"}
+function show(n){i=Math.max(0,Math.min(s.length-1,n));s.forEach((e,j)=>e.classList.toggle("on",j==i))}
+addEventListener("resize",fit);addEventListener("keydown",e=>{if(["ArrowRight"," ","PageDown"].includes(e.key))show(i+1);if(["ArrowLeft","PageUp"].includes(e.key))show(i-1)});
+addEventListener("click",e=>show(e.clientX>innerWidth/2?i+1:i-1));fit();show(0);
+</script></body></html>
